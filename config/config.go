@@ -720,8 +720,8 @@ func Load(path string) (*Configuration, error) {
 }
 
 func OverrideWithEnvironment(env string, t interface{}) (bool, error) {
-	fmt.Printf("trying: %s\n", strings.ToUpper(env))
-	if value, present := os.LookupEnv(strings.ToUpper(env)); present && value != "" {
+	fmt.Printf("trying: %s\n", env)
+	if value, present := os.LookupEnv(env); present && value != "" {
 		fmt.Printf("found: %s\n", value)
 		fmt.Printf("changing: %p\n", t)
 		return true, yaml.Unmarshal([]byte(value), t)
@@ -736,8 +736,6 @@ func OverrideWithEnvironment(env string, t interface{}) (bool, error) {
 		return false, nil
 	}
 
-	prefix := env + "_"
-
 	exportedFields := seq2.Filter(
 		tValue.Fields(),
 		func(field reflect.StructField, value reflect.Value) bool {
@@ -745,16 +743,31 @@ func OverrideWithEnvironment(env string, t interface{}) (bool, error) {
 		},
 	)
 
+	prefix := env + "_"
+
 	seq2.ForEach(
 		exportedFields,
 		func(field reflect.StructField, value reflect.Value) {
+			var yamlKey string
+			// var yamlFlags []string
+			if yamlTag, ok := field.Tag.Lookup("yaml"); ok && yamlTag != "" {
+				yamlTag := strings.Split(yamlTag, ",")
+
+				yamlKey = yamlTag[0]
+				// yamlFlags = yamlTag[1:]
+			}
+
+			if yamlKey == "-" {
+				return
+			}
+
 			var envLookupName string
-			if fromEnvTag, ok := field.Tag.Lookup("env"); ok {
-				envLookupName = fromEnvTag
-			} else if fromYamlTag, ok := field.Tag.Lookup("yaml"); ok {
-				envLookupName = fromYamlTag
+			if envTag, ok := field.Tag.Lookup("env"); ok {
+				envLookupName = envTag
+			} else if yamlKey != "" {
+				envLookupName = strings.ToUpper(yamlKey)
 			} else {
-				envLookupName = field.Name
+				envLookupName = strings.ToUpper(field.Name)
 			}
 
 			OverrideWithEnvironment(prefix+envLookupName, value.Addr().Interface())
