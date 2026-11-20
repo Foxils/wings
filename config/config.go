@@ -10,6 +10,7 @@ import (
 	"os/user"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -22,6 +23,7 @@ import (
 	"github.com/apex/log"
 	"github.com/creasty/defaults"
 	"github.com/gbrlsnchs/jwt/v3"
+	"github.com/go-softwarelab/common/pkg/seq2"
 	"golang.org/x/sys/unix"
 	"gopkg.in/yaml.v2"
 
@@ -709,7 +711,57 @@ func Load(path string) (*Configuration, error) {
 	if err := yaml.Unmarshal(b, c); err != nil {
 		return nil, err
 	}
+	// NOTE: Could use the bool returned to report if stuff was modified from environment
+	if _, err := OverrideWithEnvironment("WINGS_CFG", c); err != nil {
+		return nil, err
+	}
+
 	return c, nil
+}
+
+func OverrideWithEnvironment(env string, t interface{}) (bool, error) {
+	fmt.Printf("trying: %s\n", strings.ToUpper(env))
+	if value, present := os.LookupEnv(strings.ToUpper(env)); present && value != "" {
+		fmt.Printf("found: %s\n", value)
+		fmt.Printf("changing: %p\n", t)
+		return true, yaml.Unmarshal([]byte(value), t)
+	}
+
+	tValue := reflect.ValueOf(t)
+	for tValue.Kind() == reflect.Pointer {
+		tValue = tValue.Elem()
+	}
+
+	if tValue.Kind() != reflect.Struct {
+		return false, nil
+	}
+
+	prefix := env + "_"
+
+	exportedFields := seq2.Filter(
+		tValue.Fields(),
+		func(field reflect.StructField, value reflect.Value) bool {
+			return field.IsExported()
+		},
+	)
+
+	seq2.ForEach(
+		exportedFields,
+		func(field reflect.StructField, value reflect.Value) {
+			var envLookupName string
+			if fromEnvTag, ok := field.Tag.Lookup("env"); ok {
+				envLookupName = fromEnvTag
+			} else if fromYamlTag, ok := field.Tag.Lookup("yaml"); ok {
+				envLookupName = fromYamlTag
+			} else {
+				envLookupName = field.Name
+			}
+
+			OverrideWithEnvironment(prefix+envLookupName, value.Addr().Interface())
+		},
+	)
+
+	return true, nil // TODO: Collect errors from fields
 }
 
 // FromFile reads the configuration from the provided file and stores it in the
